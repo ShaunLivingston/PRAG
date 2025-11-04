@@ -2,12 +2,18 @@ import os
 import json
 import random
 import argparse
+import multiprocessing as mp
+from copy import deepcopy
+
 import pandas as pd
 from tqdm import tqdm
 
 from retrieve.retriever import bm25_retrieve
 from utils import get_model, model_generate
 from root_dir_path import ROOT_DIR
+
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 random.seed(42)
 
@@ -200,6 +206,105 @@ def get_qa(passage, model_name, model=None, tokenizer=None, generation_config=No
         except:
             try_times -= 1
     return output
+
+
+def create_generation_config(tokenizer):
+    return dict(
+        max_new_tokens=512,
+        return_dict_in_generate=True,
+        pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0,
+        temperature=0.7,
+        top_k=50,
+    )
+
+
+def process_single_example(data, args, model, tokenizer, generation_config):
+    data = deepcopy(data)
+    passages = bm25_retrieve(data["question"], topk=args.topk + 10)
+    final_passages = []
+    data["augment"] = []
+    success_count = 0
+    for psg in passages:
+        val = {
+            "pid": len(final_passages),
+            "passage": psg,
+            f"{args.model_name}_rewrite": get_rewrite(psg, args.model_name, model, tokenizer, generation_config)
+        }
+        qa = get_qa(psg, args.model_name, model, tokenizer, generation_config)
+        if fix_qa(qa)[0] is False:
+            continue
+        val[f"{args.model_name}_qa"] = qa
+        data["augment"].append(val)
+        final_passages.append(psg)
+        success_count += 1
+        if len(data["augment"]) == args.topk:
+            break
+    data["passages"] = final_passages
+    return data, success_count
+
+
+def set_visible_device(device_id):
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+
+
+def worker_process_dataset(task_args):
+    chunk_idx, dataset_chunk, args, device_id = task_args
+    if not dataset_chunk:
+        return chunk_idx, [], 0
+    set_visible_device(device_id)
+    model, tokenizer, _ = get_model(args.model_name)
+    generation_config = create_generation_config(tokenizer)
+    ret = []
+    total_success = 0
+    for data in dataset_chunk:
+        processed, success = process_single_example(data, args, model, tokenizer, generation_config)
+        ret.append(processed)
+        total_success += success
+    return chunk_idx, ret, total_success
+
+
+def chunk_list(data, num_chunks):
+    if num_chunks <= 1:
+        return [data]
+    length = len(data)
+    chunk_size, remainder = divmod(length, num_chunks)
+    chunks = []
+    start = 0
+    for idx in range(num_chunks):
+        end = start + chunk_size + (1 if idx < remainder else 0)
+        if start < end:
+            chunks.append(data[start:end])
+        else:
+            chunks.append([])
+        start = end
+    return chunks
+
+
+def run_parallel(dataset, args, device_ids):
+    ctx = mp.get_context("spawn")
+    chunks = chunk_list(dataset, len(device_ids))
+    tasks = [
+        (idx, chunk, args, device_ids[idx])
+        for idx, chunk in enumerate(chunks)
+        if chunk
+    ]
+    if not tasks:
+        return []
+    expected_updates = len(dataset) * args.topk
+    ret_chunks = []
+    with ctx.Pool(len(tasks)) as pool:
+        iterator = pool.imap_unordered(worker_process_dataset, tasks)
+        with tqdm(total=expected_updates) as pbar:
+            for chunk_idx, data_chunk, success_count in iterator:
+                ret_chunks.append((chunk_idx, data_chunk))
+                if success_count:
+                    pbar.update(success_count)
+            pbar.close()
+    ret_chunks.sort(key=lambda item: item[0])
+    ret = []
+    for _, data_chunk in ret_chunks:
+        ret.extend(data_chunk)
+    return ret
     
 
 def main(args):
@@ -219,14 +324,19 @@ def main(args):
         with open(os.path.join(output_dir, "total.json"), "w") as fout:
             json.dump(load_dataset["total"][:args.sample], fout, indent=4)
     
-    model, tokenizer, _ = get_model(args.model_name)
-    generation_config = dict(
-        max_new_tokens=512,
-        return_dict_in_generate=True,
-        pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0,
-        temperature=0.7,
-        top_k=50,
-    )
+    device_ids = None
+    if args.devices:
+        parsed = [dev.strip() for dev in args.devices.split(",") if dev.strip()]
+        device_ids = parsed if parsed else None
+    if device_ids:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(device_ids)
+    use_parallel = device_ids is not None and len(device_ids) > 1
+
+    if not use_parallel:
+        if device_ids:
+            set_visible_device(device_ids[0])
+        model, tokenizer, _ = get_model(args.model_name)
+        generation_config = create_generation_config(tokenizer)
 
     for filename, dataset in solve_dataset.items():
         print(f"### Solving {filename} ###")
@@ -234,30 +344,17 @@ def main(args):
             output_dir, 
             filename if filename.endswith(".json") else filename + ".json"
         )
-        ret = []
         dataset = dataset[:args.sample]
-        pbar = tqdm(total = args.sample * args.topk)
-        for data in dataset:
-            passages = bm25_retrieve(data["question"], topk=args.topk+10)
-            final_passages = []
-            data["augment"] = []
-            for psg in passages:
-                val = { 
-                    "pid": len(final_passages), 
-                    "passage": psg, 
-                    f"{args.model_name}_rewrite": get_rewrite(psg, args.model_name, model, tokenizer, generation_config)
-                }
-                qa = get_qa(psg, args.model_name, model, tokenizer, generation_config)
-                if fix_qa(qa)[0] == False: # skip error passage
-                    continue
-                val[f"{args.model_name}_qa"] = qa
-                data["augment"].append(val)
-                final_passages.append(psg)
-                pbar.update(1)
-                if len(data["augment"]) == args.topk:
-                    break
-            data["passages"] = final_passages
-            ret.append(data)
+        if use_parallel:
+            ret = run_parallel(dataset, args, device_ids)
+        else:
+            ret = []
+            pbar = tqdm(total=len(dataset) * args.topk)
+            for data in dataset:
+                processed, count = process_single_example(data, args, model, tokenizer, generation_config)
+                ret.append(processed)
+                pbar.update(count)
+            pbar.close()
         with open(output_file, "w") as fout:
             json.dump(ret, fout, indent=4)
 
@@ -268,7 +365,9 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--sample", type=int, required=True)
-    parser.add_argument("--topk", type=int, default=3) 
+    parser.add_argument("--topk", type=int, default=3)
+    parser.add_argument("--devices", type=str, default=None,
+                        help="Comma separated GPU device ids for parallel inference (e.g., '0,1').")
     args = parser.parse_args()
     print(args)
     main(args)
