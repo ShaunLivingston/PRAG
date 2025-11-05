@@ -8,6 +8,8 @@ from tqdm import tqdm
 from retrieve.retriever import bm25_retrieve
 from utils import get_model, model_generate
 from root_dir_path import ROOT_DIR
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 random.seed(42)
 
@@ -21,10 +23,10 @@ def load_popqa(data_path):
         question = data["question"]
         answer = [data["obj"]] + eval(data["o_aliases"])
         val = {
-            "test_id": did, 
-            "question": question, 
+            "test_id": did,
+            "question": question,
             "answer": answer,
-        }        
+        }
         new_dataset.append(val)
     return {"total": new_dataset}
 
@@ -42,10 +44,10 @@ def load_complexwebquestions(data_path):
             answer.extend(ans["aliases"])
         answer = list(set(answer))
         val = {
-            "test_id": did, 
-            "question": question, 
+            "test_id": did,
+            "question": question,
             "answer": answer,
-        }        
+        }
         new_dataset.append(val)
     ret = {"total": new_dataset}
     return ret
@@ -64,9 +66,9 @@ def load_2wikimultihopqa(data_path):
     for did, data in enumerate(dataset):
         ans_id = data["answer_id"]
         val = {
-            "qid": data["_id"], 
-            "test_id": did, 
-            "question": data["question"], 
+            "qid": data["_id"],
+            "test_id": did,
+            "question": data["question"],
             "answer": aliases[ans_id] if ans_id else data["answer"]
         }
         golden_passages = []
@@ -93,9 +95,9 @@ def load_hotpotqa(data_path):
     type_to_dataset = {}
     for did, data in enumerate(dataset):
         val = {
-            "qid": data["_id"], 
-            "test_id": did, 
-            "question": data["question"], 
+            "qid": data["_id"],
+            "test_id": did,
+            "question": data["question"],
             "answer": data["answer"]
         }
         tmp = []
@@ -131,7 +133,7 @@ def load_default_format_data(data_path):
         answer = data["answer"]
         assert type(answer) == str or \
                (type(answer) == list and (not any(type(a) != str for a in answer))), \
-               f"\"answer\": {answer} should be a string or a list[str]" 
+            f"\"answer\": {answer} should be a string or a list[str]"
         data["test_id"] = did
     return {filename: dataset}
 
@@ -154,6 +156,7 @@ This list should have at least three elements. You only need to output this list
 Passage:\n\
 {passage}"
 
+
 def fix_qa(qa):
     if isinstance(qa, list):
         if len(qa) >= 3:
@@ -170,10 +173,10 @@ def fix_qa(qa):
             return True, qa
     return False, qa
 
-def get_qa(passage, model_name, model=None, tokenizer=None, generation_config=None):
 
+def get_qa(passage, model_name, model=None, tokenizer=None, generation_config=None):
     def fix_json(output):
-        if model_name == "llama3.2-1b-instruct":
+        if model_name == "llama3-1b-instruct":
             output = output[output.find("["):]
             if output.endswith(","):
                 output = output[:-1]
@@ -181,9 +184,9 @@ def get_qa(passage, model_name, model=None, tokenizer=None, generation_config=No
                 output += "]"
         elif model_name == "llama3-8b-instruct":
             if "[" in output:
-                output = output[output.find("["):] 
+                output = output[output.find("["):]
             if "]" in output:
-                output = output[:output.find("]")+1]
+                output = output[:output.find("]") + 1]
         return output
 
     try_times = 100
@@ -200,7 +203,7 @@ def get_qa(passage, model_name, model=None, tokenizer=None, generation_config=No
         except:
             try_times -= 1
     return output
-    
+
 
 def main(args):
     output_dir = os.path.join(ROOT_DIR, "data_aug", args.dataset, args.model_name)
@@ -218,7 +221,7 @@ def main(args):
         solve_dataset = {k: v for k, v in load_dataset.items() if k != "total"}
         with open(os.path.join(output_dir, "total.json"), "w") as fout:
             json.dump(load_dataset["total"][:args.sample], fout, indent=4)
-    
+
     model, tokenizer, _ = get_model(args.model_name)
     generation_config = dict(
         max_new_tokens=512,
@@ -231,24 +234,24 @@ def main(args):
     for filename, dataset in solve_dataset.items():
         print(f"### Solving {filename} ###")
         output_file = os.path.join(
-            output_dir, 
+            output_dir,
             filename if filename.endswith(".json") else filename + ".json"
         )
         ret = []
         dataset = dataset[:args.sample]
-        pbar = tqdm(total = args.sample * args.topk)
+        pbar = tqdm(total=args.sample * args.topk)
         for data in dataset:
-            passages = bm25_retrieve(data["question"], topk=args.topk+10)
+            passages = bm25_retrieve(data["question"], topk=args.topk + 10)
             final_passages = []
             data["augment"] = []
             for psg in passages:
-                val = { 
-                    "pid": len(final_passages), 
-                    "passage": psg, 
+                val = {
+                    "pid": len(final_passages),
+                    "passage": psg,
                     f"{args.model_name}_rewrite": get_rewrite(psg, args.model_name, model, tokenizer, generation_config)
                 }
                 qa = get_qa(psg, args.model_name, model, tokenizer, generation_config)
-                if fix_qa(qa)[0] == False: # skip error passage
+                if fix_qa(qa)[0] == False:  # skip error passage
                     continue
                 val[f"{args.model_name}_qa"] = qa
                 data["augment"].append(val)
@@ -268,7 +271,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--sample", type=int, required=True)
-    parser.add_argument("--topk", type=int, default=3) 
+    parser.add_argument("--topk", type=int, default=3)
     args = parser.parse_args()
     print(args)
     main(args)
