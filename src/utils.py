@@ -7,6 +7,9 @@ import numpy as np
 from collections import Counter
 from typing import List, Union
 from transformers import AutoModelForCausalLM, AutoTokenizer
+# 强制离线（放在 transformers 导入之后立即设置也可以）
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 from root_dir_path import ROOT_DIR
 from prompt_template import get_prompt
@@ -120,15 +123,25 @@ def load_data(data_name, data_type, model_name):
     
 
 def get_model_path(model_name):
-    if model_name == "llama3-8b-instruct": 
-        return "meta-llama/Meta-Llama-3-8B-Instruct"
-    elif model_name == "qwen2.5-1.5b-instruct":
-        return "Qwen/Qwen2.5-1.5B-Instruct"
-    elif model_name == "llama3.2-1b-instruct":
-        return "meta-llama/Llama-3.2-1B-Instruct"
-    else:
-        return model_name
+    import os
 
+    # 模型名称到本地路径的映射
+    local_model_paths = {
+        "llama3-1b-instruct": "/home/dj/home/dj/PRAG-main/model/Meta-Llama-3-1B-Instruct",
+        "llama3-8b-instruct": "/home/dj/home/dj/PRAG-main/model/Meta-Llama-3-8B-Instruct",
+    }
+    if model_name in local_model_paths:
+        local_path = local_model_paths[model_name]
+        if os.path.isdir(local_path):
+            print(f"[Local Model] Using {model_name} at {local_path}")
+            return local_path
+        # 路径不存在就直接报错，避免任何“在线回退”
+        raise FileNotFoundError(
+            f"Local path not found for {model_name}: {local_path}\n"
+            f"Please check the path and ensure required files exist."
+        )
+        # 如果没在映射里，也不做在线回退，直接报错更安全
+    raise ValueError(f"Unknown model_name: {model_name}. Please add it to get_model_path().")
 
 def get_model(model_name, max_new_tokens=20):
     model_path = get_model_path(model_name)
@@ -137,9 +150,10 @@ def get_model(model_name, max_new_tokens=20):
         torch_dtype=torch.float32,
         low_cpu_mem_usage=True,
         device_map="auto", 
-        trust_remote_code=True
+        trust_remote_code=True,
+        local_files_only=True,  # 关键：只用本地文件
     )
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True,local_files_only=True)
     generation_config = dict(
         num_beams=1, 
         do_sample=False,
