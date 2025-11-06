@@ -26,7 +26,7 @@ from beir.retrieval.search.lexical.elastic_search import ElasticSearch
 
 # logging.basicConfig(level=logging.INFO)
 # logger = logging.getLogger(__name__)
-def get_tokenizer(model_name: str = "llama3-1b-instruct"):
+def get_tokenizer(model_name: str = "qwen2.5-1.5b-instruct"):
     global _TOKENIZER
     if _TOKENIZER is None:
         local_path = get_model_path(model_name)
@@ -222,7 +222,7 @@ def elasticsearch_hit_template(self, es_res: Dict[str, object], hits: List[Tuple
 ElasticSearch.hit_template = elasticsearch_hit_template
 
 # tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
-tokenizer = get_tokenizer("llama3-1b-instruct")
+tokenizer = get_tokenizer("qwen2.5-1.5b-instruct")
 tokenizer.pad_token = tokenizer.eos_token
 bm25_retriever = BM25(
     tokenizer=tokenizer,
