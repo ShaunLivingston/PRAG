@@ -7,6 +7,7 @@ import numpy as np
 from collections import Counter
 from typing import List, Union
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
 # 强制离线（放在 transformers 导入之后立即设置也可以）
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
@@ -16,26 +17,31 @@ from prompt_template import get_prompt
 
 DATA_ROOT_DIR = os.path.join(ROOT_DIR, "data_aug")
 
+
 class BaseDataset:
     @classmethod
     def normalize_answer(cls, s):
         def remove_articles(text):
             return re.sub(r'\b(a|an|the)\b', ' ', text)
+
         def white_space_fix(text):
             return ' '.join(text.split())
+
         def remove_punc(text):
             exclude = set(string.punctuation)
             return ''.join(ch for ch in text if ch not in exclude)
+
         def lower(text):
             return text.lower()
+
         return white_space_fix(remove_articles(remove_punc(lower(s))))
 
     @classmethod
     def exact_match_score(
-        cls,
-        prediction: str,
-        ground_truth: Union[str, List[str]],
-        ground_truth_id: Union[str, List[str]] = None
+            cls,
+            prediction: str,
+            ground_truth: Union[str, List[str]],
+            ground_truth_id: Union[str, List[str]] = None
     ):
         ground_truths = {ground_truth} if isinstance(ground_truth, str) else set(ground_truth)
         if ground_truth_id and isinstance(ground_truth_id, str):
@@ -46,22 +52,23 @@ class BaseDataset:
 
     @classmethod
     def f1_score(
-        cls,
-        prediction: str,
-        ground_truth: Union[str, List[str]],
-        ground_truth_id: Union[str, List[str]] = None
+            cls,
+            prediction: str,
+            ground_truth: Union[str, List[str]],
+            ground_truth_id: Union[str, List[str]] = None
     ):
         ground_truths = {ground_truth} if isinstance(ground_truth, str) else set(ground_truth)
         if ground_truth_id and isinstance(ground_truth_id, str):
             ground_truths.update(cls.get_all_alias(ground_truth_id))
-            
+
         final_metric = {'f1': 0, 'precision': 0, 'recall': 0}
         for ground_truth in ground_truths:
             normalized_prediction = cls.normalize_answer(prediction)
             normalized_ground_truth = cls.normalize_answer(ground_truth)
             if normalized_prediction in ['yes', 'no', 'noanswer'] and normalized_prediction != normalized_ground_truth:
                 continue
-            if normalized_ground_truth in ['yes', 'no', 'noanswer'] and normalized_prediction != normalized_ground_truth:
+            if normalized_ground_truth in ['yes', 'no',
+                                           'noanswer'] and normalized_prediction != normalized_ground_truth:
                 continue
             prediction_tokens = normalized_prediction.split()
             ground_truth_tokens = normalized_ground_truth.split()
@@ -83,9 +90,8 @@ def load_data(data_name, data_type, model_name):
     input_dir = os.path.join(DATA_ROOT_DIR, data_name, model_name)
     files = [f for f in os.listdir(input_dir)]
 
-
-    if len(files) > 1: # more types in dataset
-        if data_type == "total": # merge all types to total
+    if len(files) > 1:  # more types in dataset
+        if data_type == "total":  # merge all types to total
             all_data = {}
             for filename in files:
                 with open(os.path.join(input_dir, filename), "r") as fin:
@@ -95,7 +101,7 @@ def load_data(data_name, data_type, model_name):
             for data in all_data["total.json"]:
                 typ = data["type"] + ".json"
                 if idx[typ] == len(all_data[typ]):
-                    break 
+                    break
                 aim_data = all_data[typ][idx[typ]]
                 assert aim_data["question"] == data["question"]
                 idx[typ] += 1
@@ -120,14 +126,14 @@ def load_data(data_name, data_type, model_name):
         with open(os.path.join(input_dir, "total.json"), "r") as fin:
             solve_dataset.append(("total.json", json.load(fin)))
         return solve_dataset
-    
+
 
 def get_model_path(model_name):
     import os
 
     # 模型名称到本地路径的映射
     local_model_paths = {
-        "llama3-1b-instruct": "/home/dj/home/dj/PRAG-main/model/Meta-Llama-3-1B-Instruct",
+        "llama3.2-1b-instruct": "/home/dj/home/dj/PRAG-main/model/Meta-Llama-3.2-1B-Instruct",
         "llama3-8b-instruct": "/home/dj/home/dj/PRAG-main/model/Meta-Llama-3-8B-Instruct",
     }
     if model_name in local_model_paths:
@@ -143,19 +149,20 @@ def get_model_path(model_name):
         # 如果没在映射里，也不做在线回退，直接报错更安全
     raise ValueError(f"Unknown model_name: {model_name}. Please add it to get_model_path().")
 
+
 def get_model(model_name, max_new_tokens=20):
     model_path = get_model_path(model_name)
     model = AutoModelForCausalLM.from_pretrained(
-        model_path, 
+        model_path,
         torch_dtype=torch.float32,
         low_cpu_mem_usage=True,
-        device_map="auto", 
+        device_map="auto",
         trust_remote_code=True,
         local_files_only=True,  # 关键：只用本地文件
     )
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True,local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     generation_config = dict(
-        num_beams=1, 
+        num_beams=1,
         do_sample=False,
         max_new_tokens=max_new_tokens,
         return_dict_in_generate=True,
@@ -163,27 +170,29 @@ def get_model(model_name, max_new_tokens=20):
     )
     return model, tokenizer, generation_config
 
+
 # -------------------------------- for augmentation ----------------------------------------
 
 def model_generate(prompt, model, tokenizer, generation_config):
     messages = [{
-        'role': 'user', 
+        'role': 'user',
         'content': prompt,
     }]
     input_ids = tokenizer.apply_chat_template(
-        messages, 
+        messages,
         add_generation_prompt=True
     )
     input_len = len(input_ids)
     input_ids = torch.tensor(input_ids).unsqueeze(0).to(model.device)
     output = model.generate(
-        input_ids, 
-        attention_mask = torch.ones(input_ids.shape).to(model.device),
+        input_ids,
+        attention_mask=torch.ones(input_ids.shape).to(model.device),
         **generation_config
     )
     output = output.sequences[0][input_len:]
     text = tokenizer.decode(output, skip_special_tokens=True)
     return text
+
 
 # ------------------------------------------------------------------------------------
 
@@ -195,7 +204,7 @@ def read_complete(filepath):
     except:
         return [], 0
 
-    
+
 def evaluate(pred, ground_truth, with_cot=False):
     if not with_cot:
         pred = pred.strip()
@@ -212,7 +221,7 @@ def evaluate(pred, ground_truth, with_cot=False):
         for stop in stop_list:
             end_pos = pred.find(stop)
             if end_pos != -1:
-                pred = pred[:end_pos].strip() 
+                pred = pred[:end_pos].strip()
 
     em = BaseDataset.exact_match_score(
         prediction=pred,
@@ -232,19 +241,19 @@ def evaluate(pred, ground_truth, with_cot=False):
     }
 
 
-def predict(model, tokenizer, generation_config, question, with_cot, passages = None):
+def predict(model, tokenizer, generation_config, question, with_cot, passages=None):
     model.eval()
     input_ids = get_prompt(
-        tokenizer, 
-        question, 
-        passages = passages, 
-        with_cot = with_cot)
+        tokenizer,
+        question,
+        passages=passages,
+        with_cot=with_cot)
     input_len = len(input_ids)
     input_ids = torch.tensor(input_ids).unsqueeze(0).to(model.device)
     with torch.no_grad():
         output = model.generate(
-            input_ids, 
-            attention_mask = torch.ones(input_ids.shape).to(model.device),
+            input_ids,
+            attention_mask=torch.ones(input_ids.shape).to(model.device),
             **generation_config)
     output = output.sequences[0][input_len:]
     text = tokenizer.decode(output, skip_special_tokens=True)
