@@ -16,7 +16,7 @@ from utils import get_model, load_data
 import numpy as np
 import random
 
-seed = 42 
+seed = 42
 torch.manual_seed(seed)
 np.random.seed(seed)
 random.seed(seed)
@@ -43,10 +43,10 @@ class TrainingData(Dataset):
                 "attention_mask": attention_mask,
             })
         self.total_len = len(self.dataset)
-    
+
     def __len__(self):
         return self.total_len
-    
+
     def __getitem__(self, idx) -> Dict[str, list]:
         return self.dataset[idx]
 
@@ -56,7 +56,7 @@ class TrainingDataCollator(DefaultDataCollator):
         super().__init__()
         self.tokenizer = tokenizer
         self.device = device
-    
+
     def __call__(self, examples: List[Dict[str, list]]) -> Dict[str, torch.Tensor]:
         input_ids, labels, attention_mask = tuple(
             map(lambda x: [example[x] for example in examples], ["input_ids", "labels", "attention_mask"])
@@ -66,7 +66,7 @@ class TrainingDataCollator(DefaultDataCollator):
             "labels": torch.tensor(labels).to(self.device),
             "attention_mask": torch.tensor(attention_mask).to(self.device),
         }
-    
+
 
 def get_train_data(aug_model, augments, tokenizer, args):
     from prompt_template import get_prompt
@@ -79,19 +79,19 @@ def get_train_data(aug_model, augments, tokenizer, args):
         for qid, qa in enumerate(qas):
             if qid < qpa_cnt:
                 for ppp in [psg, rew]:
-                    prompt_ids.append(get_prompt(tokenizer, qa["question"], 
-                                                    [ppp], 
-                                                    qa["answer"] if not args.with_cot else qa["full_answer"], 
-                                                    with_cot=args.with_cot))
+                    prompt_ids.append(get_prompt(tokenizer, qa["question"],
+                                                 [ppp],
+                                                 qa["answer"] if not args.with_cot else qa["full_answer"],
+                                                 with_cot=args.with_cot))
             else:
-                prompt_ids.append(get_prompt(tokenizer, qa["question"], 
-                                                None, 
-                                                qa["answer"] if not args.with_cot else qa["full_answer"], 
-                                                with_cot=args.with_cot))
+                prompt_ids.append(get_prompt(tokenizer, qa["question"],
+                                             None,
+                                             qa["answer"] if not args.with_cot else qa["full_answer"],
+                                             with_cot=args.with_cot))
     return prompt_ids
 
 
-def train(question, augments, args, model, tokenizer, 
+def train(question, augments, args, model, tokenizer,
           init_adapter_path, save_path):
     prompt_ids = get_train_data(args.augment_model, augments, tokenizer, args)
     train_data = TrainingData(prompt_ids, tokenizer)
@@ -128,9 +128,9 @@ def main(args):
         prompt_template.get_fewshot(args.dataset)
 
     init_adapter_path = os.path.join(
-        ROOT_DIR, 
-        "offline", 
-        args.model_name, 
+        ROOT_DIR,
+        "offline",
+        args.model_name,
         f"rank={args.lora_rank}_alpha={args.lora_alpha}",
         "base_weight",
     )
@@ -142,7 +142,7 @@ def main(args):
             inference_mode=False,
             r=args.lora_rank,
             lora_alpha=args.lora_alpha,
-            lora_dropout=0, # !!!
+            lora_dropout=0,  # !!!
         )
         model = get_peft_model(model, peft_config)
         model.is_parallelizable = True
@@ -151,16 +151,16 @@ def main(args):
         os.makedirs(init_adapter_path, exist_ok=True)
         model.save_pretrained(init_adapter_path)
         time.sleep(2)
-        assert os.path.exists(os.path.join(init_adapter_path, "adapter_model.safetensors")) 
+        assert os.path.exists(os.path.join(init_adapter_path, "adapter_model.safetensors"))
 
     cot_name = "cot" if args.with_cot else "direct"
     for filename, fulldata in data_list:
-        filename = filename.split('.')[0] 
+        filename = filename.split('.')[0]
         print(f"### Solving {filename} ###")
         output_dir = os.path.join(
-            ROOT_DIR, 
-            "offline", 
-            args.model_name, 
+            ROOT_DIR,
+            "offline",
+            args.model_name,
             f"rank={args.lora_rank}_alpha={args.lora_alpha}",
             args.dataset,
             f"lr={args.learning_rate}_epoch={args.num_train_epochs}_{cot_name}",
@@ -175,9 +175,9 @@ def main(args):
                 save_path = os.path.join(output_dir, f"data_{did}", f"passage_{pid}")
                 if os.path.exists(os.path.join(save_path, "adapter_model.safetensors")):
                     continue
-                model = train(data["question"], [augment[pid]], args, model, tokenizer, 
-                            init_adapter_path, save_path)
-                
+                model = train(data["question"], [augment[pid]], args, model, tokenizer,
+                              init_adapter_path, save_path)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -185,7 +185,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--data_type", type=str)
     parser.add_argument("--with_cot", action="store_true")
-    parser.add_argument("--sample", type=int, default=-1) # -1 means all
+    parser.add_argument("--sample", type=int, default=-1)  # -1 means all
     parser.add_argument("--augment_model", type=str, default=None)
     # Train
     parser.add_argument("--per_device_train_batch_size", type=int, default=1)
