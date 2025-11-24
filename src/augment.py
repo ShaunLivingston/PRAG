@@ -8,8 +8,6 @@ from tqdm import tqdm
 from retrieve.retriever import bm25_retrieve
 from utils import get_model, model_generate
 from root_dir_path import ROOT_DIR
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 random.seed(42)
 
@@ -176,7 +174,7 @@ def fix_qa(qa):
 
 def get_qa(passage, model_name, model=None, tokenizer=None, generation_config=None):
     def fix_json(output):
-        if model_name == "llama3-1b-instruct":
+        if model_name == "llama3.2-1b-instruct":
             output = output[output.find("["):]
             if output.endswith(","):
                 output = output[:-1]
