@@ -75,6 +75,12 @@ def main(args):
         f"lr={args.learning_rate}_epoch={args.num_train_epochs}_{cot_name}",
         f"aug_model={args.augment_model}",
     )
+    # 构建输出 tag，确保不同配置写不同目录
+    run_tag = ["equal"]
+    if args.sample and args.sample > 0:
+        run_tag.append(f"s{args.sample}")
+    tag_dir = "_".join(run_tag)
+
     output_root_dir = os.path.join(
         ROOT_DIR,
         "output",
@@ -84,6 +90,7 @@ def main(args):
         f"lr={args.learning_rate}_epoch={args.num_train_epochs}_{cot_name}",
         f"aug_model={args.augment_model}",
         args.inference_method,
+        tag_dir
     )
     for filename, fulldata in data_list:
         filename = filename.split(".")[0]
@@ -181,6 +188,9 @@ if __name__ == "__main__":
     # LoRA
     parser.add_argument("--lora_rank", type=int)
     parser.add_argument("--lora_alpha", type=int)
+    # modify
+    parser.add_argument("--run_tag", type=str, default="", help="自定义后缀，方便区分多次实验")
+
     args = parser.parse_args()
     assert args.lora_rank and args.lora_alpha, "No Config for LoRA"
     if args.augment_model is None:
